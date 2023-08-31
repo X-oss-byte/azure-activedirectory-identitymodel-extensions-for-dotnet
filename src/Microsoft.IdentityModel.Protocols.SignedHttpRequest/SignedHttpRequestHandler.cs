@@ -68,6 +68,9 @@ namespace Microsoft.IdentityModel.Protocols.SignedHttpRequest
             if (signedHttpRequestDescriptor.SigningCredentials == null)
                 throw LogHelper.LogArgumentNullException(nameof(signedHttpRequestDescriptor.SigningCredentials));
 
+            // TODO - write tests to determine if MemoryStream is faster than ArrayBufferWriter
+            // what about having a cache of memory streams?
+            // TODO - combine these two memory streams.
             string encodedPayload;
             using (MemoryStream memoryStream = new MemoryStream())
             {
@@ -285,6 +288,8 @@ namespace Microsoft.IdentityModel.Protocols.SignedHttpRequest
         /// </remarks>  
         internal virtual void AddPClaim(ref Utf8JsonWriter writer, SignedHttpRequestDescriptor signedHttpRequestDescriptor)
         {
+            // TODO - use: public void WriteStringValue (ReadOnlySpan<byte> utf8Value);
+            // use: public void WritePropertyName (ReadOnlySpan<byte> utf8PropertyName);
             if (signedHttpRequestDescriptor.HttpRequestData.Uri == null)
                 throw LogHelper.LogArgumentNullException(nameof(signedHttpRequestDescriptor.HttpRequestData.Uri));
 
@@ -1244,7 +1249,9 @@ namespace Microsoft.IdentityModel.Protocols.SignedHttpRequest
         {
             byte[] hashedBytes;
 
+            // TODO - use: public static int HashData(ReadOnlySpan<byte> source, Span<byte> destination);
 #if NET6_0_OR_GREATER
+
             hashedBytes = SHA256.HashData(bytes);
 #else
             using (var hash = SHA256.Create())

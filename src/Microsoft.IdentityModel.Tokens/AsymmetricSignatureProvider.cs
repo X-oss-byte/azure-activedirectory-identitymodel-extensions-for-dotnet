@@ -194,6 +194,46 @@ namespace Microsoft.IdentityModel.Tokens
         /// </summary>
         internal override int ObjectPoolSize => _asymmetricAdapterObjectPool.Size;
 
+#if NET6_0_OR_GREATER
+        /// <summary>
+        /// This must be overridden to produce a signature over the 'input'.
+        /// </summary>
+        /// <param name="input">bytes to sign.</param>
+        /// <param name="signature"></param>
+        /// <param name="bytesWritten"></param>
+        /// <returns>signed bytes</returns>
+        internal override bool Sign(ReadOnlySpan<byte> input, Span<byte> signature, out int bytesWritten)
+        {
+            if (input == null || input.Length == 0)
+                throw LogHelper.LogArgumentNullException(nameof(input));
+
+            if (_disposed)
+            {
+                CryptoProviderCache?.TryRemove(this);
+                throw LogHelper.LogExceptionMessage(new ObjectDisposedException(GetType().ToString()));
+            }
+
+            AsymmetricAdapter asym = null;
+            try
+            {
+                asym = _asymmetricAdapterObjectPool.Allocate();
+                return asym.Sign(input, signature, out bytesWritten);
+            }
+            catch
+            {
+                CryptoProviderCache?.TryRemove(this);
+                Dispose(true);
+                throw;
+            }
+            finally
+            {
+                if (!_disposed)
+                    _asymmetricAdapterObjectPool.Free(asym);
+            }
+
+        }
+#endif
+
         /// <summary>
         /// Produces a signature over the 'input' using the <see cref="AsymmetricSecurityKey"/> and algorithm passed to <see cref="AsymmetricSignatureProvider( SecurityKey, string, bool )"/>.
         /// </summary>
@@ -219,6 +259,38 @@ namespace Microsoft.IdentityModel.Tokens
             {
                 asym = _asymmetricAdapterObjectPool.Allocate();
                 return asym.Sign(input);
+            }
+            catch
+            {
+                CryptoProviderCache?.TryRemove(this);
+                Dispose(true);
+                throw;
+            }
+            finally
+            {
+                if (!_disposed)
+                    _asymmetricAdapterObjectPool.Free(asym);
+            }
+        }
+
+        // This method is used by 461+ to allow for using a section in a buffer rather than creating a new buffer.
+        // We could be renting from the array.pool.
+        internal override byte[] Sign(byte[] input, int offset, int count)
+        {
+            if (input == null || input.Length == 0)
+                throw LogHelper.LogArgumentNullException(nameof(input));
+
+            if (_disposed)
+            {
+                CryptoProviderCache?.TryRemove(this);
+                throw LogHelper.LogExceptionMessage(new ObjectDisposedException(GetType().ToString()));
+            }
+
+            AsymmetricAdapter asym = null;
+            try
+            {
+                asym = _asymmetricAdapterObjectPool.Allocate();
+                return asym.Sign(input, offset, count);
             }
             catch
             {

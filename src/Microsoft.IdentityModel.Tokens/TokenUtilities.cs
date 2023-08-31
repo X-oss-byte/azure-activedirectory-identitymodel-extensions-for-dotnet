@@ -83,7 +83,7 @@ namespace Microsoft.IdentityModel.Tokens
             return payload;
         }
 
-        internal static IDictionary<string, object> CreateDictionaryFromClaims(
+        internal static Dictionary<string, object> CreateDictionaryFromClaims(
             IEnumerable<Claim> claims,
             SecurityTokenDescriptor tokenDescriptor,
             bool audienceSet,
@@ -128,7 +128,7 @@ namespace Microsoft.IdentityModel.Tokens
                 // When the creating the JWT and a list is found, a JsonArray will be created.
                 if (payload.TryGetValue(claim.Type, out object existingValue))
                 {
-                    if (existingValue is IList<object> existingList)
+                    if (existingValue is List<object> existingList)
                     {
                         existingList.Add(jsonClaimValue);
                     }
@@ -216,6 +216,63 @@ namespace Microsoft.IdentityModel.Tokens
                     foreach (SecurityKey key in validationParameters.IssuerSigningKeys)
                         yield return key;
             }
+        }
+
+        /// <summary>
+        /// Returns the size in bytes for a signature algorithm
+        /// </summary>
+        /// <param name="algorithm"></param>
+        /// <returns></returns>
+        internal static int GetSignatureSize(string algorithm)
+        {
+            switch (algorithm)
+            {
+                case SecurityAlgorithms.RsaSha256:
+                case SecurityAlgorithms.EcdsaSha256:
+                case SecurityAlgorithms.HmacSha256:
+                case SecurityAlgorithms.RsaSha256Signature:
+                case SecurityAlgorithms.RsaSsaPssSha256:
+                case SecurityAlgorithms.EcdsaSha256Signature:
+                case SecurityAlgorithms.HmacSha256Signature:
+                case SecurityAlgorithms.RsaSsaPssSha256Signature:
+                    return 512;
+
+                case SecurityAlgorithms.RsaSha384:
+                case SecurityAlgorithms.EcdsaSha384:
+                case SecurityAlgorithms.HmacSha384:
+                case SecurityAlgorithms.RsaSha384Signature:
+                case SecurityAlgorithms.EcdsaSha384Signature:
+                case SecurityAlgorithms.HmacSha384Signature:
+                case SecurityAlgorithms.RsaSsaPssSha384:
+                case SecurityAlgorithms.RsaSsaPssSha384Signature:
+                    return 768;
+
+                case SecurityAlgorithms.RsaSha512:
+                case SecurityAlgorithms.EcdsaSha512:
+                case SecurityAlgorithms.RsaSha512Signature:
+                case SecurityAlgorithms.EcdsaSha512Signature:
+                case SecurityAlgorithms.HmacSha512:
+                case SecurityAlgorithms.HmacSha512Signature:
+                case SecurityAlgorithms.RsaSsaPssSha512:
+                case SecurityAlgorithms.RsaSsaPssSha512Signature:
+                    return 1024;
+
+                default: return -1;
+            }
+        }
+
+        internal static bool AreBytesEqual(ReadOnlySpan<byte> bytes1, ReadOnlySpan<byte> bytes2)
+        {
+            if (bytes1.Length != bytes2.Length)
+                return false;
+
+            for (int i = 0; i < bytes1.Length; i++)
+            {
+                if (bytes1[i] != bytes2[i])
+                    return false;
+            }
+
+            return true;
         }
 
         /// <summary>

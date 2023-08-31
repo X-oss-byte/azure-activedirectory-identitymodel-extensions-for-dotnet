@@ -10,8 +10,13 @@ namespace Microsoft.IdentityModel.Tokens
     delegate byte[] EncryptDelegate(byte[] bytes);
     delegate byte[] DecryptDelegate(byte[] bytes);
     delegate byte[] SignDelegate(byte[] bytes);
+    delegate byte[] SignDelegateWithLength(byte[] bytes, int offset, int count);
+#if NET6_0_OR_GREATER
+    delegate bool SignDelegateWithSpan(ReadOnlySpan<byte> bytes, Span<byte> signature, out int bytesWritten);
+#endif
     delegate bool VerifyDelegate(byte[] bytes, byte[] signature);
-    delegate bool VerifyDelegateWithLength(byte[] bytes, int start, int length, byte[] signature);
+    delegate bool VerifyDelegateWithLength(byte[] bytes, int offset, int count, byte[] signature);
+    delegate int SignDelegateSpan(ReadOnlySpan<byte> input, Span<byte> signature);
 
     /// <summary>
     /// This adapter abstracts the 'RSA' differences between versions of .Net targets.
@@ -26,6 +31,10 @@ namespace Microsoft.IdentityModel.Tokens
         private DecryptDelegate DecryptFunction = DecryptFunctionNotFound;
         private EncryptDelegate EncryptFunction = EncryptFunctionNotFound;
         private SignDelegate SignatureFunction = SignatureFunctionNotFound;
+        private SignDelegateWithLength SignatureFunctionWithLength = SignatureFunctionWithLengthNotFound;
+#if NET6_0_OR_GREATER
+        private SignDelegateWithSpan SignatureFunctionWithSpan = SignatureFunctionWithSpanNotFound;
+#endif
         private VerifyDelegate VerifyFunction = VerifyFunctionNotFound;
         private VerifyDelegateWithLength VerifyFunctionWithLength = VerifyFunctionWithLengthNotFound;
 
@@ -131,9 +140,13 @@ namespace Microsoft.IdentityModel.Tokens
         private void InitializeUsingEcdsaSecurityKey(ECDsaSecurityKey ecdsaSecurityKey)
         {
             ECDsa = ecdsaSecurityKey.ECDsa;
-            SignatureFunction = SignWithECDsa;
-            VerifyFunction = VerifyWithECDsa;
-            VerifyFunctionWithLength = VerifyWithECDsaWithLength;
+            SignatureFunction = SignECDsa;
+            SignatureFunctionWithLength = SignECDsa;
+#if NET6_0_OR_GREATER
+            SignatureFunctionWithSpan = SignECDsa;
+#endif
+            VerifyFunction = VerifyECDsa;
+            VerifyFunctionWithLength = VerifyECDsa;
         }
 
         private void InitializeUsingRsa(RSA rsa, string algorithm)
@@ -152,10 +165,9 @@ namespace Microsoft.IdentityModel.Tokens
                 DecryptFunction = DecryptWithRsaCryptoServiceProviderProxy;
                 EncryptFunction = EncryptWithRsaCryptoServiceProviderProxy;
                 SignatureFunction = SignWithRsaCryptoServiceProviderProxy;
+                SignatureFunctionWithLength = SignWithRsaCryptoServiceProviderProxyWithLength;
                 VerifyFunction = VerifyWithRsaCryptoServiceProviderProxy;
-#if NET461_OR_GREATER
                 VerifyFunctionWithLength = VerifyWithRsaCryptoServiceProviderProxyWithLength;
-#endif
                 // RSACryptoServiceProviderProxy will track if a new RSA object is created and dispose appropriately.
                 _disposeCryptoOperators = true;
                 return;
@@ -183,9 +195,14 @@ namespace Microsoft.IdentityModel.Tokens
             RSA = rsa;
             DecryptFunction = DecryptWithRsa;
             EncryptFunction = EncryptWithRsa;
-            SignatureFunction = SignWithRsa;
-            VerifyFunction = VerifyWithRsa;
-            VerifyFunctionWithLength = VerifyWithRsaWithLength;
+            SignatureFunction = SignRsa;
+            SignatureFunctionWithLength = SignRsa;
+#if NET6_0_OR_GREATER
+            SignatureFunctionWithSpan = SignRsa;
+#endif
+
+            VerifyFunction = VerifyRsa;
+            VerifyFunctionWithLength = VerifyRsa;
         }
 
         private void InitializeUsingRsaSecurityKey(RsaSecurityKey rsaSecurityKey, string algorithm)
@@ -222,15 +239,54 @@ namespace Microsoft.IdentityModel.Tokens
             return SignatureFunction(bytes);
         }
 
+#if NET6_0_OR_GREATER
+        internal bool Sign(ReadOnlySpan<byte> data, Span<byte> destination, out int bytesWritten)
+        {
+            return SignatureFunctionWithSpan(data, destination, out bytesWritten);
+        }
+#endif
+
+        internal byte[] Sign(byte[] bytes, int offset, int count)
+        {
+            return SignatureFunctionWithLength(bytes, offset, count);
+        }
+
         private static byte[] SignatureFunctionNotFound(byte[] _)
         {
             // we should never get here, its a bug if we do.
             throw LogHelper.LogExceptionMessage(new CryptographicException(LogMessages.IDX10685));
         }
 
-        private byte[] SignWithECDsa(byte[] bytes)
+        private static byte[] SignatureFunctionWithLengthNotFound(byte[] b, int c, int d)
+        {
+            // we should never get here, its a bug if we do.
+            throw LogHelper.LogExceptionMessage(new CryptographicException(LogMessages.IDX10685));
+        }
+
+#if NET6_0_OR_GREATER
+#pragma warning disable CA1801 // Review unused parameters
+        private static bool SignatureFunctionWithSpanNotFound(ReadOnlySpan<byte> data, Span<byte> destination, out int bytesWritten)
+#pragma warning restore CA1801 // Review unused parameters
+        {
+            // we should never get here, its a bug if we do.
+            throw LogHelper.LogExceptionMessage(new CryptographicException(LogMessages.IDX10685));
+        }
+#endif
+        private byte[] SignECDsa(byte[] bytes)
         {
             return ECDsa.SignHash(HashAlgorithm.ComputeHash(bytes));
+        }
+
+#if NET6_0_OR_GREATER
+        internal bool SignECDsa(ReadOnlySpan<byte> data, Span<byte> destination, out int bytesWritten)
+        {
+            return ECDsa.TrySignData(data, destination, HashAlgorithmName, DSASignatureFormat.IeeeP1363FixedFieldConcatenation, out bytesWritten);
+        }
+#endif
+
+        private byte[] SignECDsa(byte[] bytes, int offset, int count)
+        {
+            return ECDsa.SignHash(HashAlgorithm.ComputeHash(bytes, offset, count));
         }
 
         internal bool Verify(byte[] bytes, byte[] signature)
@@ -238,9 +294,9 @@ namespace Microsoft.IdentityModel.Tokens
             return VerifyFunction(bytes, signature);
         }
 
-        internal bool Verify(byte[] bytes, int start, int length, byte[] signature)
+        internal bool Verify(byte[] bytes, int offset, int count, byte[] signature)
         {
-            return VerifyFunctionWithLength(bytes, start, length, signature);
+            return VerifyFunctionWithLength(bytes, offset, count, signature);
         }
 
         private static bool VerifyFunctionNotFound(byte[] bytes, byte[] signature)
@@ -249,20 +305,20 @@ namespace Microsoft.IdentityModel.Tokens
             throw LogHelper.LogExceptionMessage(new NotSupportedException(LogMessages.IDX10686));
         }
 
-        private static bool VerifyFunctionWithLengthNotFound(byte[] bytes, int start, int length, byte[] signature)
+        private static bool VerifyFunctionWithLengthNotFound(byte[] bytes, int offset, int count, byte[] signature)
         {
             // we should never get here, its a bug if we do.
             throw LogHelper.LogExceptionMessage(new NotSupportedException(LogMessages.IDX10686));
         }
 
-        private bool VerifyWithECDsa(byte[] bytes, byte[] signature)
+        private bool VerifyECDsa(byte[] bytes, byte[] signature)
         {
             return ECDsa.VerifyHash(HashAlgorithm.ComputeHash(bytes), signature);
         }
 
-        private bool VerifyWithECDsaWithLength(byte[] bytes, int start, int length, byte[] signature)
+        private bool VerifyECDsa(byte[] bytes, int offset, int count, byte[] signature)
         {
-            return ECDsa.VerifyHash(HashAlgorithm.ComputeHash(bytes, start, length), signature);
+            return ECDsa.VerifyHash(HashAlgorithm.ComputeHash(bytes, offset, count), signature);
         }
 
 #region NET61+ related code
@@ -291,19 +347,31 @@ namespace Microsoft.IdentityModel.Tokens
 
         private RSASignaturePadding RSASignaturePadding { get; set; }
 
-        private byte[] SignWithRsa(byte[] bytes)
+        private byte[] SignRsa(byte[] bytes)
         {
             return RSA.SignHash(HashAlgorithm.ComputeHash(bytes), HashAlgorithmName, RSASignaturePadding);
         }
 
-        private bool VerifyWithRsa(byte[] bytes, byte[] signature)
+#if NET6_0_OR_GREATER
+        internal bool SignRsa(ReadOnlySpan<byte> data, Span<byte> destination, out int bytesWritten)
+        {
+            return RSA.TrySignData(data, destination, HashAlgorithmName, RSASignaturePadding, out bytesWritten);
+        }
+#endif
+
+        private byte[] SignRsa(byte[] bytes, int offset, int count)
+        {
+            return RSA.SignData(bytes, offset, count, HashAlgorithmName, RSASignaturePadding);
+        }
+
+        private bool VerifyRsa(byte[] bytes, byte[] signature)
         {
             return RSA.VerifyHash(HashAlgorithm.ComputeHash(bytes), signature, HashAlgorithmName, RSASignaturePadding);
         }
 
-        private bool VerifyWithRsaWithLength(byte[] bytes, int start, int length, byte[] signature)
+        private bool VerifyRsa(byte[] bytes, int offset, int count, byte[] signature)
         {
-            return RSA.VerifyHash(HashAlgorithm.ComputeHash(bytes, start, length), signature, HashAlgorithmName, RSASignaturePadding);
+            return RSA.VerifyHash(HashAlgorithm.ComputeHash(bytes, offset, count), signature, HashAlgorithmName, RSASignaturePadding);
         }
 #endif
 #endregion
@@ -326,18 +394,20 @@ namespace Microsoft.IdentityModel.Tokens
         {
             return RsaCryptoServiceProviderProxy.SignData(bytes, HashAlgorithm);
         }
+        internal byte[] SignWithRsaCryptoServiceProviderProxyWithLength(byte[] bytes, int offset, int length)
+        {
+            return RsaCryptoServiceProviderProxy.SignData(bytes, offset, length, HashAlgorithm);
+        }
 
         private bool VerifyWithRsaCryptoServiceProviderProxy(byte[] bytes, byte[] signature)
         {
             return RsaCryptoServiceProviderProxy.VerifyData(bytes, HashAlgorithm, signature);
         }
 
-    #if NET461_OR_GREATER
         private bool VerifyWithRsaCryptoServiceProviderProxyWithLength(byte[] bytes, int offset, int length, byte[] signature)
         {
             return RsaCryptoServiceProviderProxy.VerifyDataWithLength(bytes, offset, length, HashAlgorithm, HashAlgorithmName, signature);
         }
-    #endif
 
 #endif
 #endregion

@@ -3,6 +3,7 @@
 
 using System;
 using System.Buffers;
+using System.Collections;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -35,6 +36,20 @@ namespace Microsoft.IdentityModel.Tokens
             _ = arg ?? throw LogHelper.LogArgumentNullException(nameof(arg));
 
             return Encode(Encoding.UTF8.GetBytes(arg));
+        }
+
+        /// <summary>
+        /// Converts a subset of an array of 8-bit unsigned integers to its equivalent string representation which is encoded with base-64-url digits.
+        /// </summary>
+        /// <param name="inArray">An array of 8-bit unsigned integers.</param>
+        /// <returns>The string representation in base 64 url encoding of length elements of inArray, starting at position offset.</returns>
+        /// <exception cref="ArgumentNullException">'inArray' is null.</exception>
+        /// <exception cref="ArgumentOutOfRangeException">offset or length is negative OR offset plus length is greater than the length of inArray.</exception>
+        public static string Encode(byte[] inArray)
+        {
+            _ = inArray ?? throw LogHelper.LogArgumentNullException(nameof(inArray));
+
+            return Encode(inArray, 0, inArray.Length);
         }
 
         /// <summary>
@@ -79,15 +94,29 @@ namespace Microsoft.IdentityModel.Tokens
                         LogHelper.MarkAsNonPII(length),
                         LogHelper.MarkAsNonPII(inArray.Length))));
 
-            int lengthmod3 = length % 3;
-            int limit = offset + (length - lengthmod3);
-            char[] output = new char[(length + 2) / 3 * 4];
+            char[] destination = new char[(inArray.Length + 2) / 3 * 4];
+            int j = Encode(inArray, destination.AsSpan<char>());
+
+            return new string(destination, 0, j);
+        }
+
+        /// <summary>
+        /// Populates a <see cref="ReadOnlySpan{T}"/>Converts a <see cref="Span{T}"/> encoded with base-64-url digits. Parameters specify
+        /// the subset as an offset in the input array, and the number of elements in the array to convert.
+        /// </summary>
+        /// <param name="inArray">A span of bytes.</param>
+        /// <param name="output">output for encoding.</param>
+        /// <returns>The number of chars written to the output.</returns>
+        public static int Encode(ReadOnlySpan<byte> inArray, Span<char> output)
+        {
+            int lengthmod3 = inArray.Length % 3;
+            int limit = (inArray.Length - lengthmod3);
             ReadOnlySpan<byte> table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"u8;
 
             int i, j = 0;
 
             // takes 3 bytes from inArray and insert 4 bytes into output
-            for (i = offset; i < limit; i += 3)
+            for (i = 0; i < limit; i += 3)
             {
                 byte d0 = inArray[i];
                 byte d1 = inArray[i + 1];
@@ -127,31 +156,10 @@ namespace Microsoft.IdentityModel.Tokens
                     }
                     break;
 
-                //default or case 0: no further operations are needed.
+                    //default or case 0: no further operations are needed.
             }
 
-            return new string(output, 0, j);
-        }
-
-        /// <summary>
-        /// Converts a subset of an array of 8-bit unsigned integers to its equivalent string representation which is encoded with base-64-url digits.
-        /// </summary>
-        /// <param name="inArray">An array of 8-bit unsigned integers.</param>
-        /// <returns>The string representation in base 64 url encoding of length elements of inArray, starting at position offset.</returns>
-        /// <exception cref="ArgumentNullException">'inArray' is null.</exception>
-        /// <exception cref="ArgumentOutOfRangeException">offset or length is negative OR offset plus length is greater than the length of inArray.</exception>
-        public static string Encode(byte[] inArray)
-        {
-            _ = inArray ?? throw LogHelper.LogArgumentNullException(nameof(inArray));
-
-            return Encode(inArray, 0, inArray.Length);
-        }
-
-        internal static string EncodeString(string str)
-        {
-            _ = str ?? throw LogHelper.LogArgumentNullException(nameof(str));
-
-            return Encode(Encoding.UTF8.GetBytes(str));
+            return j;
         }
 
         /// <summary>

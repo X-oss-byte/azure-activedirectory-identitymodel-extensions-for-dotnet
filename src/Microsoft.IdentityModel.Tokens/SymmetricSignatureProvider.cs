@@ -203,6 +203,62 @@ namespace Microsoft.IdentityModel.Tokens
             }
         }
 
+#if NET6_0_OR_GREATER
+        internal override bool Sign(ReadOnlySpan<byte> data, Span<byte> destination, out int bytesWritten)
+        {
+            KeyedHashAlgorithm keyedHashAlgorithm = GetKeyedHashAlgorithm(GetKeyBytes(Key), Algorithm);
+
+            try
+            {
+                return keyedHashAlgorithm.TryComputeHash(data, destination, out bytesWritten);
+            }
+            catch
+            {
+                CryptoProviderCache?.TryRemove(this);
+                Dispose(true);
+                throw;
+            }
+            finally
+            {
+                if (!_disposed)
+                    ReleaseKeyedHashAlgorithm(keyedHashAlgorithm);
+            }
+        }
+#endif
+
+        internal override byte[] Sign(byte[] input, int offset, int count)
+        {
+            if (input == null || input.Length == 0)
+                throw LogHelper.LogArgumentNullException(nameof(input));
+
+            if (_disposed)
+            {
+                CryptoProviderCache?.TryRemove(this);
+                throw LogHelper.LogExceptionMessage(new ObjectDisposedException(GetType().ToString()));
+            }
+
+            if (LogHelper.IsEnabled(EventLogLevel.Informational))
+                LogHelper.LogInformation(LogMessages.IDX10642, input);
+
+            KeyedHashAlgorithm keyedHashAlgorithm = GetKeyedHashAlgorithm(GetKeyBytes(Key), Algorithm);
+
+            try
+            {
+                return keyedHashAlgorithm.ComputeHash(input, offset, count);
+            }
+            catch
+            {
+                CryptoProviderCache?.TryRemove(this);
+                Dispose(true);
+                throw;
+            }
+            finally
+            {
+                if (!_disposed)
+                    ReleaseKeyedHashAlgorithm(keyedHashAlgorithm);
+            }
+        }
+
         /// <summary>
         /// Verifies that a signature created over the 'input' matches the signature. Using <see cref="SymmetricSecurityKey"/> and 'algorithm' passed to <see cref="SymmetricSignatureProvider( SecurityKey, string )"/>.
         /// </summary>
@@ -413,14 +469,13 @@ namespace Microsoft.IdentityModel.Tokens
             }
         }
 
+    #region IDisposable Members
 
-        #region IDisposable Members
-
-        /// <summary>
-        /// Disposes of internal components.
-        /// </summary>
-        /// <param name="disposing">true, if called from Dispose(), false, if invoked inside a finalizer.</param>
-        protected override void Dispose(bool disposing)
+    /// <summary>
+    /// Disposes of internal components.
+    /// </summary>
+    /// <param name="disposing">true, if called from Dispose(), false, if invoked inside a finalizer.</param>
+    protected override void Dispose(bool disposing)
         {
             if (!_disposed)
             {

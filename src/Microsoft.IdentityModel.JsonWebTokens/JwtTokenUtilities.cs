@@ -8,12 +8,10 @@ using System.Globalization;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.IdentityModel.Abstractions;
 using Microsoft.IdentityModel.Logging;
 using Microsoft.IdentityModel.Tokens;
-using Microsoft.IdentityModel.Tokens.Json;
 
 using TokenLogMessages = Microsoft.IdentityModel.Tokens.LogMessages;
 
@@ -57,17 +55,17 @@ namespace Microsoft.IdentityModel.JsonWebTokens
             if (input == null)
                 throw LogHelper.LogArgumentNullException(nameof(input));
 
-            if (signingCredentials == null)
-                throw LogHelper.LogArgumentNullException(nameof(signingCredentials));
+            _ = signingCredentials ?? throw LogHelper.LogArgumentNullException(nameof(signingCredentials));
 
             var cryptoProviderFactory = signingCredentials.CryptoProviderFactory ?? signingCredentials.Key.CryptoProviderFactory;
-            var signatureProvider = cryptoProviderFactory.CreateForSigning(signingCredentials.Key, signingCredentials.Algorithm);
-            if (signatureProvider == null)
+            var signatureProvider = cryptoProviderFactory.CreateForSigning(signingCredentials.Key, signingCredentials.Algorithm) ??
                 throw LogHelper.LogExceptionMessage(new InvalidOperationException(LogHelper.FormatInvariant(TokenLogMessages.IDX10637, signingCredentials.Key == null ? "Null" : signingCredentials.Key.ToString(), LogHelper.MarkAsNonPII(signingCredentials.Algorithm))));
 
             try
             {
-                LogHelper.LogVerbose(LogMessages.IDX14200);
+                if (LogHelper.IsEnabled(EventLogLevel.Verbose))
+                    LogHelper.LogVerbose(LogMessages.IDX14200);
+
                 return Base64UrlEncoder.Encode(signatureProvider.Sign(Encoding.UTF8.GetBytes(input)));
             }
             finally
@@ -75,6 +73,76 @@ namespace Microsoft.IdentityModel.JsonWebTokens
                 cryptoProviderFactory.ReleaseSignatureProvider(signatureProvider);
             }
         }
+
+        internal static byte[] CreateEncodedSignature(byte[] input, int offset, int count, SigningCredentials signingCredentials)
+        {
+            if (input == null)
+                throw LogHelper.LogArgumentNullException(nameof(input));
+
+            if (signingCredentials == null)
+                return null;
+
+            var cryptoProviderFactory = signingCredentials.CryptoProviderFactory ?? signingCredentials.Key.CryptoProviderFactory;
+            var signatureProvider = cryptoProviderFactory.CreateForSigning(signingCredentials.Key, signingCredentials.Algorithm) ??
+                throw LogHelper.LogExceptionMessage(
+                    new InvalidOperationException(
+                        LogHelper.FormatInvariant(
+                            TokenLogMessages.IDX10637,
+                            signingCredentials.Key == null ? "Null" : signingCredentials.Key.ToString(),
+                            LogHelper.MarkAsNonPII(signingCredentials.Algorithm))));
+
+            try
+            {
+                // TODO - api for net7+ RSA SignData takes a Span and returns signature in a span.
+                if (LogHelper.IsEnabled(EventLogLevel.Verbose))
+                    LogHelper.LogVerbose(LogMessages.IDX14200);
+
+                return signatureProvider.Sign(input, offset, count);
+            }
+            finally
+            {
+                cryptoProviderFactory.ReleaseSignatureProvider(signatureProvider);
+            }
+        }
+
+#if NET6_0_OR_GREATER
+        /// <summary>
+        /// Produces a signature over the <paramref name="data"/>.
+        /// </summary>
+        /// <param name="data">Span containing bytes to be signed.</param>
+        /// <param name="destination">destination for signature.</param>
+        /// <param name="signingCredentials">The <see cref="SigningCredentials"/> that contain crypto specs used to sign the token.</param>
+        /// <param name="bytesWritten"></param>
+        /// <returns>The size of the signature.</returns>
+        /// <exception cref="ArgumentNullException">'input' or 'signingCredentials' is null.</exception>
+        internal static bool CreateSignature(ReadOnlySpan<byte> data, Span<byte> destination, SigningCredentials signingCredentials, out int bytesWritten)
+        {
+            bytesWritten = 0;
+            if (signingCredentials == null)
+                return false;
+
+            var cryptoProviderFactory = signingCredentials.CryptoProviderFactory ?? signingCredentials.Key.CryptoProviderFactory;
+            var signatureProvider = cryptoProviderFactory.CreateForSigning(signingCredentials.Key, signingCredentials.Algorithm) ??
+                throw LogHelper.LogExceptionMessage(
+                    new InvalidOperationException(
+                        LogHelper.FormatInvariant(
+                            TokenLogMessages.IDX10637, signingCredentials.Key == null ? "Null" : signingCredentials.Key.ToString(),
+                            LogHelper.MarkAsNonPII(signingCredentials.Algorithm))));
+
+            try
+            {
+                // TODO - api for net7+ RSA SignData takes a Span and returns signature in a span.
+                if (LogHelper.IsEnabled(EventLogLevel.Verbose))
+                    LogHelper.LogVerbose(LogMessages.IDX14200);
+
+                return signatureProvider.Sign(data, destination, out bytesWritten);
+            }
+            finally
+            {
+                cryptoProviderFactory.ReleaseSignatureProvider(signatureProvider);
+            }
+        }
+#endif
 
         /// <summary>
         /// Produces a signature over the <paramref name="input"/>.
@@ -89,13 +157,15 @@ namespace Microsoft.IdentityModel.JsonWebTokens
             if (input == null)
                 throw LogHelper.LogArgumentNullException(nameof(input));
 
-            if (signingCredentials == null)
-                throw LogHelper.LogArgumentNullException(nameof(signingCredentials));
+            _ = signingCredentials ?? throw LogHelper.LogArgumentNullException(nameof(signingCredentials));
 
             var cryptoProviderFactory = signingCredentials.CryptoProviderFactory ?? signingCredentials.Key.CryptoProviderFactory;
-            var signatureProvider = cryptoProviderFactory.CreateForSigning(signingCredentials.Key, signingCredentials.Algorithm, cacheProvider);
-            if (signatureProvider == null)
-                throw LogHelper.LogExceptionMessage(new InvalidOperationException(LogHelper.FormatInvariant(TokenLogMessages.IDX10637, signingCredentials.Key == null ? "Null" : signingCredentials.Key.ToString(), LogHelper.MarkAsNonPII(signingCredentials.Algorithm))));
+            var signatureProvider = cryptoProviderFactory.CreateForSigning(signingCredentials.Key, signingCredentials.Algorithm, cacheProvider) ??
+                throw LogHelper.LogExceptionMessage(
+                    new InvalidOperationException(
+                        LogHelper.FormatInvariant(
+                            TokenLogMessages.IDX10637, signingCredentials.Key == null ? "Null" : signingCredentials.Key.ToString(),
+                            LogHelper.MarkAsNonPII(signingCredentials.Algorithm))));
 
             try
             {
@@ -122,8 +192,7 @@ namespace Microsoft.IdentityModel.JsonWebTokens
         /// <returns>Decompressed JWT token</returns>
         internal static string DecompressToken(byte[] tokenBytes, string algorithm)
         {
-            if (tokenBytes == null)
-                throw LogHelper.LogArgumentNullException(nameof(tokenBytes));
+            _ = tokenBytes ?? throw LogHelper.LogArgumentNullException(nameof(tokenBytes));
 
             if (string.IsNullOrEmpty(algorithm))
                 throw LogHelper.LogArgumentNullException(nameof(algorithm));
@@ -132,7 +201,6 @@ namespace Microsoft.IdentityModel.JsonWebTokens
                 throw LogHelper.LogExceptionMessage(new NotSupportedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10682, LogHelper.MarkAsNonPII(algorithm))));
 
             var compressionProvider = CompressionProviderFactory.Default.CreateCompressionProvider(algorithm);
-
             var decompressedBytes = compressionProvider.Decompress(tokenBytes);
 
             return decompressedBytes != null ? Encoding.UTF8.GetString(decompressedBytes) : throw LogHelper.LogExceptionMessage(new SecurityTokenDecompressionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10679, LogHelper.MarkAsNonPII(algorithm))));
@@ -150,11 +218,8 @@ namespace Microsoft.IdentityModel.JsonWebTokens
             TokenValidationParameters validationParameters,
             JwtTokenDecryptionParameters decryptionParameters)
         {
-            if (validationParameters == null)
-                throw LogHelper.LogArgumentNullException(nameof(validationParameters));
-
-            if (decryptionParameters == null)
-                throw LogHelper.LogArgumentNullException(nameof(decryptionParameters));
+            _ = validationParameters ?? throw LogHelper.LogArgumentNullException(nameof(validationParameters));
+            _ = decryptionParameters ?? throw LogHelper.LogArgumentNullException(nameof(decryptionParameters));
 
             bool decryptionSucceeded = false;
             bool algorithmNotSupportedByCryptoProvider = false;
@@ -256,24 +321,57 @@ namespace Microsoft.IdentityModel.JsonWebTokens
             }
         }
 
-        private static void ValidateDecryption(JwtTokenDecryptionParameters decryptionParameters, bool decryptionSucceeded, bool algorithmNotSupportedByCryptoProvider, StringBuilder exceptionStrings, StringBuilder keysAttempted)
+        private static void ValidateDecryption(
+            JwtTokenDecryptionParameters decryptionParameters,
+            bool decryptionSucceeded,
+            bool algorithmNotSupportedByCryptoProvider,
+            StringBuilder exceptionStrings,
+            StringBuilder keysAttempted)
         {
             if (!decryptionSucceeded && keysAttempted is not null)
-                throw LogHelper.LogExceptionMessage(new SecurityTokenDecryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10603, keysAttempted, (object)exceptionStrings ?? "", LogHelper.MarkAsSecurityArtifact(decryptionParameters.EncodedToken, SafeLogJwtToken))));
+                throw LogHelper.LogExceptionMessage(
+                    new SecurityTokenDecryptionFailedException(
+                        LogHelper.FormatInvariant(
+                            TokenLogMessages.IDX10603,
+                            keysAttempted,
+                            (object)exceptionStrings ?? "",
+                            LogHelper.MarkAsSecurityArtifact(decryptionParameters.EncodedToken, SafeLogJwtToken))));
 
             if (!decryptionSucceeded && algorithmNotSupportedByCryptoProvider)
-                throw LogHelper.LogExceptionMessage(new SecurityTokenDecryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10619, LogHelper.MarkAsNonPII(decryptionParameters.Alg), LogHelper.MarkAsNonPII(decryptionParameters.Enc))));
+                throw LogHelper.LogExceptionMessage(
+                    new SecurityTokenDecryptionFailedException(
+                        LogHelper.FormatInvariant(
+                            TokenLogMessages.IDX10619,
+                            LogHelper.MarkAsNonPII(decryptionParameters.Alg),
+                            LogHelper.MarkAsNonPII(decryptionParameters.Enc))));
 
             if (!decryptionSucceeded)
-                throw LogHelper.LogExceptionMessage(new SecurityTokenDecryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10609, LogHelper.MarkAsSecurityArtifact(decryptionParameters.EncodedToken, SafeLogJwtToken))));
+                throw LogHelper.LogExceptionMessage(
+                    new SecurityTokenDecryptionFailedException(
+                        LogHelper.FormatInvariant(
+                            TokenLogMessages.IDX10609,
+                            LogHelper.MarkAsSecurityArtifact(decryptionParameters.EncodedToken, SafeLogJwtToken))));
         }
 
-        private static byte[] DecryptToken(CryptoProviderFactory cryptoProviderFactory, SecurityKey key, string encAlg, byte[] ciphertext, byte[] headerAscii, byte[] initializationVector, byte[] authenticationTag)
+        // TODO - make byte[] an out parameter so we don't have to allocate a new byte[].
+        private static byte[] DecryptToken(
+            CryptoProviderFactory cryptoProviderFactory,
+            SecurityKey key,
+            string encAlg,
+            byte[] ciphertext,
+            byte[] headerAscii,
+            byte[] initializationVector,
+            byte[] authenticationTag)
         {
             using (AuthenticatedEncryptionProvider decryptionProvider = cryptoProviderFactory.CreateAuthenticatedEncryptionProvider(key, encAlg))
             {
                 if (decryptionProvider == null)
-                    throw LogHelper.LogExceptionMessage(new InvalidOperationException(LogHelper.FormatInvariant(TokenLogMessages.IDX10610, key, LogHelper.MarkAsNonPII(encAlg))));
+                    throw LogHelper.LogExceptionMessage(
+                        new InvalidOperationException(
+                            LogHelper.FormatInvariant(
+                                TokenLogMessages.IDX10610,
+                                key,
+                                LogHelper.MarkAsNonPII(encAlg))));
 
                 return decryptionProvider.Decrypt(
                     ciphertext,
@@ -321,7 +419,12 @@ namespace Microsoft.IdentityModel.JsonWebTokens
             if (JwtConstants.DirectKeyUseAlg.Equals(encryptingCredentials.Alg))
             {
                 if (!cryptoProviderFactory.IsSupportedAlgorithm(encryptingCredentials.Enc, encryptingCredentials.Key))
-                    throw LogHelper.LogExceptionMessage(new SecurityTokenEncryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10615, LogHelper.MarkAsNonPII(encryptingCredentials.Enc), encryptingCredentials.Key)));
+                    throw LogHelper.LogExceptionMessage(
+                        new SecurityTokenEncryptionFailedException(
+                            LogHelper.FormatInvariant(
+                                TokenLogMessages.IDX10615,
+                                LogHelper.MarkAsNonPII(encryptingCredentials.Enc),
+                                encryptingCredentials.Key)));
 
                 securityKey = encryptingCredentials.Key;
             }
@@ -339,7 +442,13 @@ namespace Microsoft.IdentityModel.JsonWebTokens
                         apv = objApv?.ToString();
                 }
 
-                EcdhKeyExchangeProvider ecdhKeyExchangeProvider = new EcdhKeyExchangeProvider(encryptingCredentials.Key as ECDsaSecurityKey, encryptingCredentials.KeyExchangePublicKey, encryptingCredentials.Alg, encryptingCredentials.Enc);
+                EcdhKeyExchangeProvider ecdhKeyExchangeProvider =
+                    new EcdhKeyExchangeProvider(
+                        encryptingCredentials.Key as ECDsaSecurityKey,
+                        encryptingCredentials.KeyExchangePublicKey,
+                        encryptingCredentials.Alg,
+                        encryptingCredentials.Enc);
+
                 SecurityKey kdf = ecdhKeyExchangeProvider.GenerateKdf(apu, apv);
                 kwProvider = cryptoProviderFactory.CreateKeyWrapProvider(kdf, ecdhKeyExchangeProvider.GetEncryptionAlgorithm());
 
@@ -352,7 +461,13 @@ namespace Microsoft.IdentityModel.JsonWebTokens
                     securityKey = new SymmetricSecurityKey(GenerateKeyBytes(512));
                 else
                     throw LogHelper.LogExceptionMessage(
-                        new SecurityTokenEncryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10617, LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes128KW), LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes192KW), LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes256KW), LogHelper.MarkAsNonPII(kwProvider.Algorithm))));
+                        new SecurityTokenEncryptionFailedException(
+                            LogHelper.FormatInvariant(
+                                TokenLogMessages.IDX10617,
+                                LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes128KW),
+                                LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes192KW),
+                                LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes256KW),
+                                LogHelper.MarkAsNonPII(kwProvider.Algorithm))));
 
                 wrappedKey = kwProvider.WrapKey(((SymmetricSecurityKey)securityKey).Key);
             }
@@ -360,7 +475,12 @@ namespace Microsoft.IdentityModel.JsonWebTokens
             else
             {
                 if (!cryptoProviderFactory.IsSupportedAlgorithm(encryptingCredentials.Alg, encryptingCredentials.Key))
-                    throw LogHelper.LogExceptionMessage(new SecurityTokenEncryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10615, LogHelper.MarkAsNonPII(encryptingCredentials.Alg), encryptingCredentials.Key)));
+                    throw LogHelper.LogExceptionMessage(
+                        new SecurityTokenEncryptionFailedException(
+                            LogHelper.FormatInvariant(
+                                TokenLogMessages.IDX10615,
+                                LogHelper.MarkAsNonPII(encryptingCredentials.Alg),
+                                encryptingCredentials.Key)));
 
                 // only 128, 384 and 512 AesCbcHmac for CEK algorithm
                 if (SecurityAlgorithms.Aes128CbcHmacSha256.Equals(encryptingCredentials.Enc))
@@ -371,7 +491,13 @@ namespace Microsoft.IdentityModel.JsonWebTokens
                     securityKey = new SymmetricSecurityKey(GenerateKeyBytes(512));
                 else
                     throw LogHelper.LogExceptionMessage(
-                        new SecurityTokenEncryptionFailedException(LogHelper.FormatInvariant(TokenLogMessages.IDX10617, LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes128CbcHmacSha256), LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes192CbcHmacSha384), LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes256CbcHmacSha512), LogHelper.MarkAsNonPII(encryptingCredentials.Enc))));
+                        new SecurityTokenEncryptionFailedException(
+                            LogHelper.FormatInvariant(
+                                TokenLogMessages.IDX10617,
+                                LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes128CbcHmacSha256),
+                                LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes192CbcHmacSha384),
+                                LogHelper.MarkAsNonPII(SecurityAlgorithms.Aes256CbcHmacSha512),
+                                LogHelper.MarkAsNonPII(encryptingCredentials.Enc))));
 
                 kwProvider = cryptoProviderFactory.CreateKeyWrapProvider(encryptingCredentials.Key, encryptingCredentials.Alg);
                 wrappedKey = kwProvider.WrapKey(((SymmetricSecurityKey)securityKey).Key);
@@ -427,9 +553,16 @@ namespace Microsoft.IdentityModel.JsonWebTokens
         /// <param name="configuration">The <see cref="BaseConfiguration"/> that will be used along with the <see cref="TokenValidationParameters"/> to resolve the signing key</param>
         /// <returns>Returns a <see cref="SecurityKey"/> to use for signature validation.</returns>
         /// <remarks>Resolve the signing key using configuration then the validationParameters until a key is resolved. If key fails to resolve, then null is returned.</remarks>
-        internal static SecurityKey ResolveTokenSigningKey(string kid, string x5t, TokenValidationParameters validationParameters, BaseConfiguration configuration)
+        internal static SecurityKey ResolveTokenSigningKey(
+            string kid,
+            string x5t,
+            TokenValidationParameters validationParameters,
+            BaseConfiguration configuration)
         {
-            return ResolveTokenSigningKey(kid, x5t, configuration?.SigningKeys) ?? ResolveTokenSigningKey(kid, x5t, ConcatSigningKeys(validationParameters));
+            return ResolveTokenSigningKey(
+                kid,
+                x5t,
+                configuration?.SigningKeys) ?? ResolveTokenSigningKey(kid, x5t, ConcatSigningKeys(validationParameters));
         }
 
         /// <summary>
@@ -440,7 +573,10 @@ namespace Microsoft.IdentityModel.JsonWebTokens
         /// <param name="signingKeys">A collection of <see cref="SecurityKey"/> a signing key to be resolved from.</param>
         /// <returns>Returns a <see cref="SecurityKey"/> to use for signature validation.</returns>
         /// <remarks>If key fails to resolve, then null is returned</remarks>
-        internal static SecurityKey ResolveTokenSigningKey(string kid, string x5t, IEnumerable<SecurityKey> signingKeys)
+        internal static SecurityKey ResolveTokenSigningKey(
+            string kid,
+            string x5t,
+            IEnumerable<SecurityKey> signingKeys)
         {
             if (signingKeys == null)
                 return null;
